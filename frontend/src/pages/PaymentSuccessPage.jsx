@@ -14,7 +14,7 @@ export default function PaymentSuccessPage() {
 
   useEffect(() => {
     if (!profile?.orgId || !tier) return;
-    if (tier !== 'tier1' && tier !== 'tier2') {
+    if (tier !== 'tier1' && tier !== 'tier2' && tier !== 'infrastructure') {
       setError('Invalid tier.');
       setProcessing(false);
       return;

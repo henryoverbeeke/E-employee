@@ -44,6 +44,15 @@ def verify_org_member(event):
 
     return email, user, None
 
+def get_store_id(event, user):
+    """Get storeId from query params or user's assigned store."""
+    qs = event.get('queryStringParameters') or {}
+    store_id = qs.get('storeId', '')
+    if not store_id and user.get('storeId'):
+        store_id = user['storeId']
+    return store_id
+
+
 def list_inventory(event):
     email, user, error = verify_org_member(event)
     if error:
@@ -52,6 +61,11 @@ def list_inventory(event):
     org_id = event['pathParameters']['orgId']
     resp = inventory_table.query(KeyConditionExpression=Key('orgId').eq(org_id))
     items = resp.get('Items', [])
+
+    # Filter by storeId for infrastructure tier
+    store_id = get_store_id(event, user)
+    if store_id:
+        items = [i for i in items if i.get('storeId') == store_id]
 
     org_resp = orgs_table.get_item(Key={'orgId': org_id})
     org = org_resp.get('Item', {})
@@ -85,6 +99,8 @@ def add_item(event):
     item_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat() + 'Z'
 
+    store_id = get_store_id(event, user)
+
     item = {
         'orgId': org_id,
         'itemId': item_id,
@@ -93,6 +109,9 @@ def add_item(event):
         'updatedAt': now,
         'updatedBy': email
     }
+
+    if store_id:
+        item['storeId'] = store_id
 
     if 'lowStockThreshold' in body:
         item['lowStockThreshold'] = int(body['lowStockThreshold'])
@@ -152,6 +171,10 @@ def get_alerts(event):
     org_id = event['pathParameters']['orgId']
     resp = inventory_table.query(KeyConditionExpression=Key('orgId').eq(org_id))
     items = resp.get('Items', [])
+
+    store_id = get_store_id(event, user)
+    if store_id:
+        items = [i for i in items if i.get('storeId') == store_id]
 
     org_resp = orgs_table.get_item(Key={'orgId': org_id})
     org = org_resp.get('Item', {})

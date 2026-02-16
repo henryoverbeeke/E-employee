@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useStore } from '../contexts/StoreContext';
 
 export default function InventoryPage() {
   const { profile, apiCall } = useAuth();
+  const { storeId, currentStore, isInfrastructure } = useStore();
   const [items, setItems] = useState([]);
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -15,11 +17,15 @@ export default function InventoryPage() {
 
   useEffect(() => {
     if (profile?.orgId) loadInventory();
-  }, [profile]);
+  }, [profile, storeId]);
+
+  function storeParam() {
+    return isInfrastructure && storeId ? `?storeId=${storeId}` : '';
+  }
 
   async function loadInventory() {
     try {
-      const data = await apiCall(`/organizations/${profile.orgId}/inventory`);
+      const data = await apiCall(`/organizations/${profile.orgId}/inventory${storeParam()}`);
       setItems(data.items || []);
     } catch (e) {
       setError(e.message);
@@ -36,7 +42,7 @@ export default function InventoryPage() {
     try {
       const body = { itemName, quantity: parseInt(quantity) || 0 };
       if (threshold) body.lowStockThreshold = parseInt(threshold);
-      await apiCall(`/organizations/${profile.orgId}/inventory`, {
+      await apiCall(`/organizations/${profile.orgId}/inventory${storeParam()}`, {
         method: 'POST',
         body: JSON.stringify(body)
       });
@@ -85,7 +91,7 @@ export default function InventoryPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1><span style={{ color: 'var(--teal-500)' }}>Inventory</span></h1>
+        <h1><span style={{ color: 'var(--teal-500)' }}>Inventory</span>{isInfrastructure && currentStore && <span style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--gray-500)', marginLeft: '0.75rem' }}>{currentStore.storeName}</span>}</h1>
         <p className="subtitle">{items.length} item{items.length !== 1 ? 's' : ''} tracked</p>
       </div>
 

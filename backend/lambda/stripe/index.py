@@ -65,7 +65,9 @@ def handle_config(event):
     return respond(200, {
         'publishableKey': STRIPE_PUBLISHABLE_KEY,
         'tier1CheckoutUrl': os.environ.get('STRIPE_TIER1_URL', ''),
-        'tier2CheckoutUrl': os.environ.get('STRIPE_TIER2_URL', '')
+        'tier2CheckoutUrl': os.environ.get('STRIPE_TIER2_URL', ''),
+        'infrastructureCheckoutUrl': os.environ.get('STRIPE_INFRA_URL', ''),
+        'extraStoreCheckoutUrl': os.environ.get('STRIPE_EXTRA_STORE_URL', '')
     })
 
 
@@ -86,7 +88,7 @@ def handle_activate(event):
     if not session_id or not tier:
         return respond(400, {'error': 'sessionId and tier are required'})
 
-    if tier not in ('tier1', 'tier2'):
+    if tier not in ('tier1', 'tier2', 'infrastructure'):
         return respond(400, {'error': 'Invalid tier'})
 
     # Retrieve the checkout session from Stripe
@@ -296,6 +298,50 @@ def handle_lookup(event):
     })
 
 
+def handle_add_store(event):
+    """Link an extra store subscription to the org."""
+    email = get_user_email(event)
+    if not email:
+        return respond(401, {'error': 'Unauthorized'})
+
+    user = get_user_org(email)
+    if not user or user.get('role') != 'admin':
+        return respond(403, {'error': 'Admin access required'})
+
+    body = json.loads(event.get('body', '{}'))
+    session_id = body.get('sessionId', '')
+
+    org_resp = orgs_table.get_item(Key={'orgId': user['orgId']})
+    org = org_resp.get('Item', {})
+
+    if org.get('tier') != 'infrastructure':
+        return respond(400, {'error': 'Infrastructure plan required'})
+
+    sub_id = ''
+    if session_id:
+        session = stripe_request('GET', f'/checkout/sessions/{session_id}')
+        if 'error' not in session:
+            sub_id = session.get('subscription', '')
+
+    extra_subs = org.get('extraStoreSubIds', [])
+    if not isinstance(extra_subs, list):
+        extra_subs = []
+
+    if sub_id and sub_id not in extra_subs:
+        extra_subs.append(sub_id)
+
+    orgs_table.update_item(
+        Key={'orgId': user['orgId']},
+        UpdateExpression='SET extraStoreSubIds = :e',
+        ExpressionAttributeValues={':e': extra_subs}
+    )
+
+    return respond(200, {
+        'message': 'Extra store add-on linked',
+        'extraStoreCount': len(extra_subs)
+    })
+
+
 def handle_cancel_immediately(event):
     """Cancel immediately and remove tier."""
     email = get_user_email(event)
@@ -358,5 +404,9 @@ def lambda_handler(event, context):
     # POST /stripe/lookup
     if method == 'POST' and path.endswith('/stripe/lookup'):
         return handle_lookup(event)
+
+    # POST /stripe/add-store
+    if method == 'POST' and path.endswith('/stripe/add-store'):
+        return handle_add_store(event)
 
     return respond(404, {'error': 'Not found'})

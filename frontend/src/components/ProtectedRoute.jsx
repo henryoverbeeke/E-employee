@@ -1,9 +1,9 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const TIER_LEVELS = { none: 0, tier1: 1, tier2: 2 };
+const TIER_LEVELS = { none: 0, tier1: 1, tier2: 2, infrastructure: 3 };
 
-export default function ProtectedRoute({ children, adminOnly = false, requiredTier = null }) {
+export default function ProtectedRoute({ children, adminOnly = false, managerOk = false, requiredTier = null }) {
   const { user, profile, loading } = useAuth();
 
   if (loading) {
@@ -15,7 +15,11 @@ export default function ProtectedRoute({ children, adminOnly = false, requiredTi
   }
 
   if (adminOnly && profile?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
+    if (managerOk && profile?.role === 'manager') {
+      // allow managers through
+    } else {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   if (requiredTier) {

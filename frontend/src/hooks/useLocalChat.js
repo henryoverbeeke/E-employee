@@ -1,11 +1,13 @@
 import { useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useStore } from '../contexts/StoreContext';
 import { config } from '../config';
 
 const hasSubtleCrypto = !!(globalThis.crypto && globalThis.crypto.subtle);
 
 export function useChat() {
   const { getToken, profile, apiCall } = useAuth();
+  const { storeId, isInfrastructure } = useStore();
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -125,7 +127,10 @@ export function useChat() {
       if (!connectingRef.current) return;
 
       // Connect to API Gateway WebSocket with token in query string
-      const wsUrl = `${config.chatWsUrl}?token=${encodeURIComponent(token)}`;
+      let wsUrl = `${config.chatWsUrl}?token=${encodeURIComponent(token)}`;
+      if (isInfrastructure && storeId) {
+        wsUrl += `&storeId=${encodeURIComponent(storeId)}`;
+      }
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

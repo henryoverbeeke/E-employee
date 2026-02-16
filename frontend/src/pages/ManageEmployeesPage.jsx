@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useStore } from '../contexts/StoreContext';
 
 export default function ManageEmployeesPage() {
   const { profile, apiCall, fetchProfile, getToken } = useAuth();
+  const { storeId, currentStore, isInfrastructure } = useStore();
   const [employees, setEmployees] = useState([]);
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');

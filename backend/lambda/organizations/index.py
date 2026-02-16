@@ -123,8 +123,8 @@ def update_organization(event):
         expr_values[':chatPort'] = port
     if 'tier' in body:
         tier = body['tier']
-        if tier not in ('none', 'tier1', 'tier2'):
-            return respond(400, {'error': 'Invalid tier. Must be none, tier1, or tier2'})
+        if tier not in ('none', 'tier1', 'tier2', 'infrastructure'):
+            return respond(400, {'error': 'Invalid tier. Must be none, tier1, tier2, or infrastructure'})
         update_expr_parts.append('tier = :tier')
         expr_values[':tier'] = tier
 

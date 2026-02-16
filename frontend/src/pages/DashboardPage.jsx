@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useStore } from '../contexts/StoreContext';
 
 export default function DashboardPage() {
   const { profile, apiCall } = useAuth();
+  const { storeId, currentStore, isInfrastructure } = useStore();
   const [stats, setStats] = useState({ employees: 0, items: 0, alerts: 0 });
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -11,12 +13,12 @@ export default function DashboardPage() {
   const upgraded = searchParams.get('upgraded');
 
   const tier = profile?.tier || 'none';
-  const tierLevel = { none: 0, tier1: 1, tier2: 2 }[tier] || 0;
+  const tierLevel = { none: 0, tier1: 1, tier2: 2, infrastructure: 3 }[tier] || 0;
 
   useEffect(() => {
     if (!profile?.orgId) return;
     loadDashboard();
-  }, [profile]);
+  }, [profile, storeId]);
 
   // Auto-dismiss upgrade banner after 6s
   useEffect(() => {
@@ -28,12 +30,16 @@ export default function DashboardPage() {
     return () => clearTimeout(timer);
   }, [upgraded]);
 
+  function sp() {
+    return isInfrastructure && storeId ? `?storeId=${storeId}` : '';
+  }
+
   async function loadDashboard() {
     try {
       const [empData, invData, alertData] = await Promise.all([
         apiCall(`/organizations/${profile.orgId}/employees`),
-        apiCall(`/organizations/${profile.orgId}/inventory`),
-        apiCall(`/organizations/${profile.orgId}/inventory/alerts`)
+        apiCall(`/organizations/${profile.orgId}/inventory${sp()}`),
+        apiCall(`/organizations/${profile.orgId}/inventory/alerts${sp()}`)
       ]);
 
       setStats({
@@ -57,7 +63,7 @@ export default function DashboardPage() {
     <div className="page">
       {upgraded && (
         <div className="alert alert-success" style={{ marginBottom: '1.5rem' }}>
-          Your organization has been upgraded to <strong>{upgraded === 'tier2' ? 'Tier 2' : 'Tier 1'}</strong>. All features are now unlocked.
+          Your organization has been upgraded to <strong>{upgraded === 'infrastructure' ? 'Infrastructure' : upgraded === 'tier2' ? 'Tier 2' : 'Tier 1'}</strong>. All features are now unlocked.
         </div>
       )}
 

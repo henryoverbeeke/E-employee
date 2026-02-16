@@ -8,6 +8,7 @@ from datetime import datetime
 dynamodb = boto3.resource('dynamodb', region_name='us-east-2')
 users_table = dynamodb.Table('EEmployee_Users')
 orgs_table = dynamodb.Table('EEmployee_Organizations')
+stores_table = dynamodb.Table('EEmployee_Stores')
 cognito = boto3.client('cognito-idp', region_name='us-east-2')
 
 USER_POOL_ID = os.environ.get('USER_POOL_ID', '')
@@ -49,6 +50,31 @@ def get_me(event):
         org = org_resp.get('Item')
         if org:
             user['tier'] = org.get('tier', 'none')
+            user['orgName'] = org.get('orgName', '')
+
+            # For infrastructure tier, include store info
+            if org.get('tier') == 'infrastructure':
+                from boto3.dynamodb.conditions import Key as DKey
+                if user.get('role') == 'admin':
+                    # Admin sees all stores
+                    store_resp = stores_table.query(
+                        KeyConditionExpression=DKey('orgId').eq(user['orgId'])
+                    )
+                    user['stores'] = store_resp.get('Items', [])
+                elif user.get('role') == 'manager' and user.get('storeId'):
+                    store_resp = stores_table.get_item(
+                        Key={'orgId': user['orgId'], 'storeId': user['storeId']}
+                    )
+                    store = store_resp.get('Item')
+                    user['stores'] = [store] if store else []
+                elif user.get('storeId'):
+                    store_resp = stores_table.get_item(
+                        Key={'orgId': user['orgId'], 'storeId': user['storeId']}
+                    )
+                    store = store_resp.get('Item')
+                    user['stores'] = [store] if store else []
+                else:
+                    user['stores'] = []
 
     return respond(200, user)
 
@@ -78,12 +104,19 @@ def create_employee(event):
         return respond(401, {'error': 'Unauthorized'})
 
     caller = get_user_record(email)
-    if not caller or caller['orgId'] != org_id or caller['role'] != 'admin':
-        return respond(403, {'error': 'Admin access required'})
+    if not caller or caller['orgId'] != org_id:
+        return respond(403, {'error': 'Access denied'})
+    if caller['role'] not in ('admin', 'manager'):
+        return respond(403, {'error': 'Admin or manager access required'})
 
     body = json.loads(event.get('body', '{}'))
     emp_email = body.get('email')
     display_name = body.get('displayName', '')
+    emp_role = body.get('role', 'employee')
+    store_id = body.get('storeId', '')
+
+    if emp_role not in ('employee', 'manager'):
+        return respond(400, {'error': 'Role must be employee or manager'})
 
     if not emp_email:
         return respond(400, {'error': 'email is required'})
@@ -99,6 +132,14 @@ def create_employee(event):
     existing = get_user_record(emp_email)
     if existing:
         return respond(409, {'error': 'User already exists'})
+
+    # For infrastructure tier, managers also need permission
+    if caller['role'] == 'manager':
+        if emp_role == 'manager':
+            return respond(403, {'error': 'Managers cannot create other managers'})
+        if not caller.get('storeId'):
+            return respond(403, {'error': 'Manager has no store assigned'})
+        store_id = caller['storeId']
 
     temp_password = 'Ee' + str(random.randint(100000, 999999))
 
@@ -119,19 +160,20 @@ def create_employee(event):
         return respond(500, {'error': f'Failed to create Cognito user: {str(e)}'})
 
     now = datetime.utcnow().isoformat() + 'Z'
-    users_table.put_item(Item={
+    user_item = {
         'email': emp_email,
         'orgId': org_id,
-        'role': 'employee',
+        'role': emp_role,
         'displayName': display_name or emp_email.split('@')[0],
         'createdAt': now
-    })
+    }
+    if store_id:
+        user_item['storeId'] = store_id
+
+    users_table.put_item(Item=user_item)
 
     return respond(201, {
-        'email': emp_email,
-        'orgId': org_id,
-        'role': 'employee',
-        'displayName': display_name or emp_email.split('@')[0],
+        **user_item,
         'tempPassword': temp_password,
         'message': 'Employee created successfully'
     })
@@ -145,8 +187,10 @@ def delete_employee(event):
         return respond(401, {'error': 'Unauthorized'})
 
     caller = get_user_record(email)
-    if not caller or caller['orgId'] != org_id or caller['role'] != 'admin':
-        return respond(403, {'error': 'Admin access required'})
+    if not caller or caller['orgId'] != org_id:
+        return respond(403, {'error': 'Access denied'})
+    if caller['role'] not in ('admin', 'manager'):
+        return respond(403, {'error': 'Admin or manager access required'})
 
     emp = get_user_record(emp_email)
     if not emp or emp['orgId'] != org_id:
@@ -154,6 +198,12 @@ def delete_employee(event):
 
     if emp['role'] == 'admin':
         return respond(400, {'error': 'Cannot delete admin user'})
+
+    if caller['role'] == 'manager':
+        if emp['role'] == 'manager':
+            return respond(403, {'error': 'Managers cannot remove other managers'})
+        if emp.get('storeId') != caller.get('storeId'):
+            return respond(403, {'error': 'You can only remove employees from your store'})
 
     try:
         cognito.admin_disable_user(
