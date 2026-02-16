@@ -18,7 +18,7 @@ export default function ManageEmployeesPage() {
   const [subInfo, setSubInfo] = useState(null);
   const [subLoading, setSubLoading] = useState(true);
   const [subAction, setSubAction] = useState('');
-  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupFailed, setLookupFailed] = useState(false);
 
   // Chat server state
   const [chatStatus, setChatStatus] = useState('none'); // none | starting | booting | running | stopped | failed | terminated
@@ -190,10 +190,32 @@ export default function ManageEmployeesPage() {
     try {
       const data = await apiCall('/stripe/subscription');
       setSubInfo(data);
+      // If no subscription is linked, try auto-linking by the admin's email
+      if ((!data || data.status === 'none') && profile?.role === 'admin') {
+        await autoLinkStripe();
+      }
     } catch {
       setSubInfo(null);
+      // Try auto-link even if the subscription fetch failed
+      if (profile?.role === 'admin') {
+        await autoLinkStripe();
+      }
     } finally {
       setSubLoading(false);
+    }
+  }
+
+  async function autoLinkStripe() {
+    try {
+      const result = await apiCall('/stripe/lookup', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      setSubInfo(result);
+      const token = await getToken();
+      await fetchProfile(token);
+    } catch {
+      setLookupFailed(true);
     }
   }
 
@@ -212,26 +234,6 @@ export default function ManageEmployeesPage() {
       setError(e.message || `Failed to ${action}`);
     } finally {
       setSubAction('');
-    }
-  }
-
-  async function handleStripeLookup() {
-    setLookupLoading(true);
-    setError('');
-    setSuccess('');
-    try {
-      const result = await apiCall('/stripe/lookup', {
-        method: 'POST',
-        body: JSON.stringify({})
-      });
-      setSuccess('Stripe subscription linked successfully!');
-      setSubInfo(result);
-      const token = await getToken();
-      await fetchProfile(token);
-    } catch (e) {
-      setError(e.message || 'No subscription found for your email');
-    } finally {
-      setLookupLoading(false);
     }
   }
 
@@ -312,26 +314,26 @@ export default function ManageEmployeesPage() {
           </>
         ) : (
           <>
-            <p className="form-hint" style={{ marginBottom: '0.75rem' }}>
-              {tier === 'none'
-                ? 'No active subscription. Subscribe to unlock features.'
-                : 'No Stripe subscription linked.'}
-            </p>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <Link to="/pricing" className="btn btn-primary btn-small">
-                View Plans
-              </Link>
-              <button
-                className="btn btn-small"
-                onClick={handleStripeLookup}
-                disabled={lookupLoading}
-              >
-                {lookupLoading ? 'Looking up...' : 'Already Paid? Link My Account'}
-              </button>
-            </div>
-            <p className="form-hint" style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
-              "Link My Account" checks Stripe for a subscription under your login email ({profile?.email}).
-            </p>
+            {lookupFailed ? (
+              <>
+                <p className="form-hint" style={{ marginBottom: '0.75rem' }}>
+                  No subscription found for <strong>{profile?.email}</strong>.
+                  If you already paid, the email on your Stripe account may not match your login email.
+                </p>
+                <div className="alert alert-warning" style={{ marginBottom: '0.75rem' }}>
+                  Please contact support to link your payment manually.
+                </div>
+              </>
+            ) : (
+              <p className="form-hint" style={{ marginBottom: '0.75rem' }}>
+                {tier === 'none'
+                  ? 'No active subscription. Subscribe to unlock features.'
+                  : 'No Stripe subscription linked.'}
+              </p>
+            )}
+            <Link to="/pricing" className="btn btn-primary btn-small">
+              View Plans
+            </Link>
           </>
         )}
       </div>
