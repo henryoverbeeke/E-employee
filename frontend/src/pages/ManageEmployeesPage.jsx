@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ManageEmployeesPage() {
-  const { profile, apiCall } = useAuth();
+  const { profile, apiCall, fetchProfile, getToken } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -12,6 +13,11 @@ export default function ManageEmployeesPage() {
   const [tempEmail, setTempEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+
+  // Subscription state
+  const [subInfo, setSubInfo] = useState(null);
+  const [subLoading, setSubLoading] = useState(true);
+  const [subAction, setSubAction] = useState('');
 
   // Chat server state
   const [chatStatus, setChatStatus] = useState('none'); // none | starting | booting | running | stopped | failed | terminated
@@ -27,6 +33,7 @@ export default function ManageEmployeesPage() {
     if (profile?.orgId) {
       loadEmployees();
       loadChatStatus();
+      loadSubscription();
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [profile]);
@@ -178,6 +185,126 @@ export default function ManageEmployeesPage() {
     }
   }
 
+  async function loadSubscription() {
+    try {
+      const data = await apiCall('/stripe/subscription');
+      setSubInfo(data);
+    } catch {
+      setSubInfo(null);
+    } finally {
+      setSubLoading(false);
+    }
+  }
+
+  async function handleSubAction(action) {
+    setSubAction(action);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await apiCall(`/stripe/${action}`, { method: 'POST' });
+      setSuccess(result.message || 'Done');
+      await loadSubscription();
+      // Refresh profile to pick up tier changes
+      const token = await getToken();
+      await fetchProfile(token);
+    } catch (e) {
+      setError(e.message || `Failed to ${action}`);
+    } finally {
+      setSubAction('');
+    }
+  }
+
+  function renderPlanCard() {
+    const tier = profile?.tier || 'none';
+    const tierLabel = tier === 'tier2' ? 'Tier 2' : tier === 'tier1' ? 'Tier 1' : 'No Plan';
+
+    return (
+      <div className="card">
+        <h3>Organization Plan</h3>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <span style={{
+            fontWeight: 600,
+            fontSize: '1rem',
+            color: tier === 'none' ? 'var(--gray-500)' : 'var(--blue-500)'
+          }}>
+            {tierLabel}
+          </span>
+          {tier !== 'none' && (
+            <span className="badge badge-success">Active</span>
+          )}
+        </div>
+
+        {subLoading ? (
+          <p className="form-hint">Loading subscription details...</p>
+        ) : subInfo && subInfo.status !== 'none' ? (
+          <>
+            <div style={{ fontSize: '0.875rem', color: 'var(--gray-700)', marginBottom: '0.5rem' }}>
+              Status: <strong style={{ textTransform: 'capitalize' }}>{subInfo.status}</strong>
+            </div>
+            {subInfo.currentPeriodEnd && (
+              <div style={{ fontSize: '0.8125rem', color: 'var(--gray-600)', marginBottom: '0.5rem' }}>
+                Current period ends: {new Date(subInfo.currentPeriodEnd * 1000).toLocaleDateString()}
+              </div>
+            )}
+            {subInfo.cancelAtPeriodEnd && (
+              <div className="alert alert-warning" style={{ marginBottom: '0.75rem' }}>
+                This subscription is set to cancel at the end of the current billing period.
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {subInfo.cancelAtPeriodEnd ? (
+                <button
+                  className="btn btn-primary btn-small"
+                  onClick={() => handleSubAction('reactivate')}
+                  disabled={!!subAction}
+                >
+                  {subAction === 'reactivate' ? 'Reactivating...' : 'Keep Subscription'}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-small"
+                  onClick={() => handleSubAction('cancel')}
+                  disabled={!!subAction}
+                  style={{ background: 'var(--amber-500)', color: '#fff', border: 'none' }}
+                >
+                  {subAction === 'cancel' ? 'Cancelling...' : 'Cancel at Period End'}
+                </button>
+              )}
+              <button
+                className="btn btn-danger btn-small"
+                onClick={() => {
+                  if (confirm('Cancel immediately? You will lose access to paid features right away.')) {
+                    handleSubAction('cancel-now');
+                  }
+                }}
+                disabled={!!subAction}
+              >
+                {subAction === 'cancel-now' ? 'Cancelling...' : 'Cancel Immediately'}
+              </button>
+              {tier === 'tier1' && (
+                <Link to="/pricing" className="btn btn-primary btn-small">
+                  Upgrade to Tier 2
+                </Link>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="form-hint" style={{ marginBottom: '0.75rem' }}>
+              {tier === 'none'
+                ? 'No active subscription. Subscribe to unlock features.'
+                : 'No Stripe subscription linked.'}
+            </p>
+            <Link to="/pricing" className="btn btn-primary btn-small">
+              View Plans
+            </Link>
+          </>
+        )}
+      </div>
+    );
+  }
+
   function renderChatServerCard() {
     const isActive = chatStatus === 'running';
     const isBooting = chatStatus === 'booting' || chatStatus === 'starting';
@@ -303,7 +430,7 @@ export default function ManageEmployeesPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1>Manage Employees</h1>
+        <h1><span style={{ color: 'var(--purple-500)' }}>Manage Employees</span></h1>
         <p className="subtitle">{employees.length} member{employees.length !== 1 ? 's' : ''}</p>
       </div>
 
@@ -328,6 +455,8 @@ export default function ManageEmployeesPage() {
           </button>
         </div>
       )}
+
+      {renderPlanCard()}
 
       {renderChatServerCard()}
 

@@ -85,7 +85,7 @@ export default function InventoryPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1>Inventory</h1>
+        <h1><span style={{ color: 'var(--teal-500)' }}>Inventory</span></h1>
         <p className="subtitle">{items.length} item{items.length !== 1 ? 's' : ''} tracked</p>
       </div>
 

@@ -54,6 +54,7 @@ def create_organization(event):
         'ownerEmail': owner_email,
         'encryptionSalt': encryption_salt,
         'lowStockThreshold': 5,
+        'tier': 'none',
         'createdAt': now
     })
 
@@ -120,6 +121,12 @@ def update_organization(event):
             return respond(400, {'error': 'Port must be between 1024 and 65535'})
         update_expr_parts.append('chatServerPort = :chatPort')
         expr_values[':chatPort'] = port
+    if 'tier' in body:
+        tier = body['tier']
+        if tier not in ('none', 'tier1', 'tier2'):
+            return respond(400, {'error': 'Invalid tier. Must be none, tier1, or tier2'})
+        update_expr_parts.append('tier = :tier')
+        expr_values[':tier'] = tier
 
     if not update_expr_parts:
         return respond(400, {'error': 'No fields to update'})

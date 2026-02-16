@@ -43,6 +43,13 @@ def get_me(event):
     if not user:
         return respond(404, {'error': 'User profile not found'})
 
+    # Include org tier in the profile
+    if user.get('orgId'):
+        org_resp = orgs_table.get_item(Key={'orgId': user['orgId']})
+        org = org_resp.get('Item')
+        if org:
+            user['tier'] = org.get('tier', 'none')
+
     return respond(200, user)
 
 def list_employees(event):

@@ -107,7 +107,7 @@ export default function ChatPage() {
     <div className="page chat-page">
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <h1>Chat</h1>
+          <h1><span style={{ color: 'var(--blue-500)' }}>Chat</span></h1>
           {isConnected && (
             <span className="wifi-badge">
               <span className="status-dot connected" /> Connected
