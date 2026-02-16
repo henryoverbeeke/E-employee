@@ -131,7 +131,9 @@ export function useChat() {
       // Check once more that we haven't been superseded
       if (!connectingRef.current) return;
 
-      const wsUrl = `ws://${org.chatServerHost}:${org.chatServerPort}`;
+      const isSecure = window.location.protocol === 'https:';
+      const wsPort = isSecure ? (org.chatServerWssPort || 8766) : org.chatServerPort;
+      const wsUrl = `${isSecure ? 'wss' : 'ws'}://${org.chatServerHost}:${wsPort}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -182,7 +184,12 @@ export function useChat() {
       };
 
       ws.onerror = () => {
-        setConnectionError('Could not connect to the chat server. It may be offline.');
+        const isSecure = window.location.protocol === 'https:';
+        if (isSecure) {
+          setConnectionError(`cert_needed:${org.chatServerHost}:${wsPort}`);
+        } else {
+          setConnectionError('Could not connect to the chat server. It may be offline.');
+        }
         setIsConnected(false);
         setConnectionStatus('error');
       };

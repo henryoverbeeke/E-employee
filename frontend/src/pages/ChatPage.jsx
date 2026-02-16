@@ -89,7 +89,33 @@ export default function ChatPage() {
             </button>
           </div>
         );
-      case 'error':
+      case 'error': {
+        const isCertError = connectionError?.startsWith('cert_needed:');
+        if (isCertError) {
+          const [, host, port] = connectionError.split(':');
+          const certUrl = `https://${host}:${port}`;
+          return (
+            <div className="scan-status">
+              <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>One more step to connect</p>
+              <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                Your browser needs to trust the chat server's certificate. Click the button below, then accept the warning in the new tab.
+              </p>
+              <a
+                href={certUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ marginBottom: '0.75rem', display: 'inline-block' }}
+              >
+                Trust Chat Server
+              </a>
+              <br />
+              <button className="btn btn-small" onClick={connect} style={{ marginTop: '0.5rem' }}>
+                I've accepted it — Connect
+              </button>
+            </div>
+          );
+        }
         return (
           <div className="scan-status">
             {connectionError && <div className="alert alert-error">{connectionError}</div>}
@@ -98,6 +124,7 @@ export default function ChatPage() {
             </button>
           </div>
         );
+      }
       default:
         return null;
     }

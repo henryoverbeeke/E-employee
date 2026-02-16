@@ -3,8 +3,12 @@ const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const https = require('https');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.PORT || 8765;
+const WSS_PORT = process.env.WSS_PORT || 8766;
 const COGNITO_POOL_ID = process.env.COGNITO_POOL_ID || 'us-east-2_Hv31RDYP0';
 const REGION = 'us-east-2';
 const API_URL = process.env.API_URL || 'https://4g4pnqmotd.execute-api.us-east-2.amazonaws.com/prod';
@@ -214,9 +218,49 @@ function broadcast(orgId, message, exclude = null) {
   }
 }
 
-// Start server
+// --- Generate self-signed cert for WSS ---
+function ensureCert() {
+  const certDir = path.join(__dirname, 'certs');
+  const keyPath = path.join(certDir, 'key.pem');
+  const certPath = path.join(certDir, 'cert.pem');
+  if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true });
+  if (!fs.existsSync(keyPath)) {
+    console.log('Generating self-signed certificate...');
+    execSync(`openssl req -x509 -newkey rsa:2048 -keyout ${keyPath} -out ${certPath} -days 365 -nodes -subj "/CN=eemployee-chat"`, { stdio: 'ignore' });
+  }
+  return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+}
+
+// --- HTTPS server for WSS ---
+function handleHttp(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'eemployee-chat', wss: true }));
+    return;
+  }
+  // Landing page so users can accept the cert
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end('<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Certificate accepted!</h2><p>You can close this tab and go back to chat.</p></body></html>');
+}
+
+try {
+  const tlsOpts = ensureCert();
+  const httpsServer = https.createServer(tlsOpts, handleHttp);
+  const wssSecure = new WebSocketServer({ server: httpsServer });
+  wssSecure.on('connection', (ws) => wss.emit('connection', ws));
+  httpsServer.listen(WSS_PORT, '0.0.0.0', () => {
+    console.log(`WSS listening on port ${WSS_PORT}`);
+  });
+} catch (e) {
+  console.log('WSS not available (no openssl?):', e.message);
+}
+
+// Start HTTP server
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`E-Employee Chat Server v2.0`);
-  console.log(`Listening on port ${PORT}`);
-  console.log(`Health check: http://0.0.0.0:${PORT}/health`);
+  console.log(`WS on port ${PORT} | WSS on port ${WSS_PORT}`);
 });
