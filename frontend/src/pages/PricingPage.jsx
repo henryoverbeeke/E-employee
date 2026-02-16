@@ -6,6 +6,7 @@ const TIER2_URL = 'https://buy.stripe.com/test_bJeeVf0A2a6SdAde8H4c803';
 export default function PricingPage() {
   const { profile } = useAuth();
   const currentTier = profile?.tier || 'none';
+  const isAdmin = profile?.role === 'admin';
 
   function buildStripeUrl(baseUrl) {
     if (!profile?.orgId) return baseUrl;
@@ -49,9 +50,13 @@ export default function PricingPage() {
             </ul>
           </div>
           {currentTier === 'none' ? (
-            <a href={buildStripeUrl(TIER1_URL)} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-full">
-              Subscribe to Tier 1
-            </a>
+            isAdmin ? (
+              <a href={buildStripeUrl(TIER1_URL)} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-full">
+                Subscribe to Tier 1
+              </a>
+            ) : (
+              <p style={{ color: 'var(--gray-500)', fontSize: '0.8rem' }}>Ask your admin to upgrade</p>
+            )
           ) : (
             <span className="badge badge-success" style={{ fontSize: '0.8rem', padding: '0.375rem 1rem' }}>
               {currentTier === 'tier1' ? 'Current Plan' : 'Included'}
@@ -89,10 +94,12 @@ export default function PricingPage() {
             <span className="badge badge-success" style={{ fontSize: '0.8rem', padding: '0.375rem 1rem' }}>
               Current Plan
             </span>
-          ) : (
+          ) : isAdmin ? (
             <a href={buildStripeUrl(TIER2_URL)} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-full">
               {currentTier === 'tier1' ? 'Upgrade to Tier 2' : 'Subscribe to Tier 2'}
             </a>
+          ) : (
+            <p style={{ color: 'var(--gray-500)', fontSize: '0.8rem' }}>Ask your admin to upgrade</p>
           )}
         </div>
       </div>

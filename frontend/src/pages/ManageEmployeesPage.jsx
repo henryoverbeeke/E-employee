@@ -458,7 +458,7 @@ export default function ManageEmployeesPage() {
 
       {renderPlanCard()}
 
-      {renderChatServerCard()}
+      {(profile?.tier === 'tier2') && renderChatServerCard()}
 
       <div className="card">
         <h3>Add Employee</h3>
