@@ -14,7 +14,9 @@ export default function PaymentSuccessPage() {
 
   useEffect(() => {
     if (!profile?.orgId || !tier) return;
-    if (tier !== 'tier1' && tier !== 'tier2' && tier !== 'infrastructure') {
+
+    const validTiers = ['tier1', 'tier2', 'infrastructure', 'extra_store'];
+    if (!validTiers.includes(tier)) {
       setError('Invalid tier.');
       setProcessing(false);
       return;
@@ -22,24 +24,33 @@ export default function PaymentSuccessPage() {
 
     async function activate() {
       try {
+        if (tier === 'extra_store') {
+          // Extra store add-on -- link the subscription via /stripe/add-store
+          await apiCall('/stripe/add-store', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId })
+          });
+
+          const token = await getToken();
+          await fetchProfile(token);
+          navigate('/stores?added=true', { replace: true });
+          return;
+        }
+
         if (sessionId) {
-          // Call the Stripe Lambda to verify session and store subscription info
           await apiCall('/stripe/activate', {
             method: 'POST',
             body: JSON.stringify({ sessionId, tier })
           });
         } else {
-          // Fallback: just set the tier directly (no Stripe session)
           await apiCall(`/organizations/${profile.orgId}`, {
             method: 'PUT',
             body: JSON.stringify({ tier })
           });
         }
 
-        // Refresh profile so the new tier is picked up
         const token = await getToken();
         await fetchProfile(token);
-
         navigate(`/dashboard?upgraded=${tier}`, { replace: true });
       } catch (e) {
         setError(e.message || 'Failed to activate plan');
@@ -55,7 +66,9 @@ export default function PaymentSuccessPage() {
       {processing ? (
         <>
           <div className="spinner" />
-          <p style={{ color: 'var(--gray-600)', marginTop: '1rem' }}>Activating your plan...</p>
+          <p style={{ color: 'var(--gray-600)', marginTop: '1rem' }}>
+            {tier === 'extra_store' ? 'Linking extra store...' : 'Activating your plan...'}
+          </p>
         </>
       ) : error ? (
         <div className="alert alert-error" style={{ maxWidth: 400, margin: '0 auto' }}>{error}</div>
