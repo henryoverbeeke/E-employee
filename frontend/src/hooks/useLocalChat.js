@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { config } from '../config';
 
 const hasSubtleCrypto = !!(globalThis.crypto && globalThis.crypto.subtle);
 
@@ -9,7 +10,7 @@ export function useChat() {
   const [users, setUsers] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState('idle'); // idle | connecting | connected | error | not_configured | booting
+  const [connectionStatus, setConnectionStatus] = useState('idle');
   const wsRef = useRef(null);
   const encKeyRef = useRef(null);
   const connectingRef = useRef(false);
@@ -77,7 +78,6 @@ export function useChat() {
     if (connectingRef.current) return;
     connectingRef.current = true;
 
-    // Close any existing connection first
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.onerror = null;
@@ -90,6 +90,7 @@ export function useChat() {
     setConnectionStatus('connecting');
 
     try {
+      // Check chat server status
       const serverInfo = await apiCall(`/organizations/${profile.orgId}/chat-server`);
       const status = serverInfo.chatServerStatus;
 
@@ -100,7 +101,7 @@ export function useChat() {
       }
 
       if (status === 'starting' || status === 'booting') {
-        setConnectionError('The chat server is still starting up. This usually takes a few minutes. Please try again shortly.');
+        setConnectionError('');
         setConnectionStatus('booting');
         return;
       }
@@ -118,22 +119,13 @@ export function useChat() {
       }
 
       const org = await apiCall(`/organizations/${profile.orgId}`);
-
-      if (!org.chatServerHost || !org.chatServerPort) {
-        setConnectionError('Chat server has not been configured. Ask your admin to set it up in the Employees page.');
-        setConnectionStatus('not_configured');
-        return;
-      }
-
       const token = await getToken();
       encKeyRef.current = await deriveKey(profile.orgId, org.encryptionSalt);
 
-      // Check once more that we haven't been superseded
       if (!connectingRef.current) return;
 
-      const isSecure = window.location.protocol === 'https:';
-      const wsPort = isSecure ? (org.chatServerWssPort || 8766) : org.chatServerPort;
-      const wsUrl = `${isSecure ? 'wss' : 'ws'}://${org.chatServerHost}:${wsPort}`;
+      // Connect to API Gateway WebSocket with token in query string
+      const wsUrl = `${config.chatWsUrl}?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -184,12 +176,7 @@ export function useChat() {
       };
 
       ws.onerror = () => {
-        const isSecure = window.location.protocol === 'https:';
-        if (isSecure) {
-          setConnectionError(`cert_needed:${org.chatServerHost}:${wsPort}`);
-        } else {
-          setConnectionError('Could not connect to the chat server. It may be offline.');
-        }
+        setConnectionError('Could not connect to the chat server. It may be offline.');
         setIsConnected(false);
         setConnectionStatus('error');
       };

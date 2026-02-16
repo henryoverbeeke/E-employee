@@ -1,14 +1,9 @@
 const http = require('http');
-const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const https = require('https');
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
 
 const PORT = process.env.PORT || 8765;
-const WSS_PORT = process.env.WSS_PORT || 8766;
 const COGNITO_POOL_ID = process.env.COGNITO_POOL_ID || 'us-east-2_Hv31RDYP0';
 const REGION = 'us-east-2';
 const API_URL = process.env.API_URL || 'https://4g4pnqmotd.execute-api.us-east-2.amazonaws.com/prod';
@@ -56,211 +51,146 @@ function fetchUserProfile(token) {
   });
 }
 
-// Org-scoped rooms: { orgId: Set<ws> }
+// Org-scoped rooms: { orgId: Set<email> }
 const rooms = {};
-// Connection metadata: Map<ws, { email, displayName, orgId }>
-const connections = new Map();
+// User metadata: { email: { email, displayName, orgId } }
+const userMeta = {};
 
-// --- HTTP server for health check ---
-const httpServer = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+function readBody(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); }
+      catch { resolve({}); }
+    });
+  });
+}
 
+function respond(res, statusCode, body) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  });
+  res.end(JSON.stringify(body));
+}
+
+const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
+    respond(res, 204, {});
     return;
   }
 
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+  if (req.url === '/health' && req.method === 'GET') {
+    respond(res, 200, {
       status: 'ok',
       service: 'eemployee-chat',
-      version: '2.0',
+      version: '3.0',
       port: PORT,
-      connections: connections.size,
-      rooms: Object.keys(rooms).length
-    }));
+      rooms: Object.keys(rooms).length,
+      users: Object.keys(userMeta).length
+    });
     return;
   }
 
-  res.writeHead(404);
-  res.end();
-});
-
-// --- WebSocket server attached to HTTP server ---
-const wss = new WebSocketServer({ server: httpServer });
-
-wss.on('connection', (ws) => {
-  let authenticated = false;
-  let authTimeout = setTimeout(() => {
-    if (!authenticated) {
-      ws.send(JSON.stringify({ type: 'auth_error', message: 'Authentication timeout' }));
-      ws.close();
+  if (req.url === '/auth' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!body.token) {
+      respond(res, 400, { error: 'token required' });
+      return;
     }
-  }, 10000);
-
-  ws.on('message', async (raw) => {
-    let data;
     try {
-      data = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
-
-    if (data.type === 'auth' && !authenticated) {
-      try {
-        const decoded = await verifyToken(data.token);
-        const profile = await fetchUserProfile(data.token);
-
-        if (!profile || !profile.orgId) {
-          ws.send(JSON.stringify({ type: 'auth_error', message: 'User profile not found' }));
-          ws.close();
-          return;
-        }
-
-        clearTimeout(authTimeout);
-        authenticated = true;
-
-        const meta = {
-          email: decoded.email || profile.email,
-          displayName: profile.displayName || decoded.email,
-          orgId: profile.orgId
-        };
-        // Kick any existing connection for the same email in this org
-        if (rooms[meta.orgId]) {
-          for (const peer of rooms[meta.orgId]) {
-            const peerMeta = connections.get(peer);
-            if (peerMeta && peerMeta.email === meta.email && peer !== ws) {
-              peer.onclose = null;
-              connections.delete(peer);
-              rooms[meta.orgId].delete(peer);
-              try { peer.close(); } catch {}
-            }
-          }
-        }
-
-        connections.set(ws, meta);
-
-        if (!rooms[meta.orgId]) rooms[meta.orgId] = new Set();
-        rooms[meta.orgId].add(ws);
-
-        ws.send(JSON.stringify({ type: 'auth_success' }));
-
-        // Send current user list (deduplicated by email)
-        const seen = new Set();
-        const userList = [];
-        for (const peer of rooms[meta.orgId]) {
-          const peerMeta = connections.get(peer);
-          if (peerMeta && !seen.has(peerMeta.email)) {
-            seen.add(peerMeta.email);
-            userList.push({ email: peerMeta.email, displayName: peerMeta.displayName });
-          }
-        }
-        ws.send(JSON.stringify({ type: 'user_list', users: userList }));
-
-        // Notify others
-        broadcast(meta.orgId, {
-          type: 'user_joined',
-          email: meta.email,
-          displayName: meta.displayName
-        }, ws);
-
-        console.log(`[+] ${meta.email} joined org ${meta.orgId}`);
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
-        ws.close();
+      const decoded = await verifyToken(body.token);
+      const profile = await fetchUserProfile(body.token);
+      if (!profile || !profile.orgId) {
+        respond(res, 401, { error: 'User profile not found' });
+        return;
       }
-      return;
-    }
-
-    if (!authenticated) return;
-
-    if (data.type === 'message') {
-      const meta = connections.get(ws);
-      if (!meta) return;
-
-      broadcast(meta.orgId, {
-        type: 'message',
-        from: meta.email,
-        payload: data.payload,
-        iv: data.iv,
-        timestamp: new Date().toISOString()
+      respond(res, 200, {
+        email: decoded.email || profile.email,
+        displayName: profile.displayName || decoded.email,
+        orgId: profile.orgId
       });
+    } catch (err) {
+      respond(res, 401, { error: 'Invalid token' });
     }
-  });
-
-  ws.on('close', () => {
-    clearTimeout(authTimeout);
-    const meta = connections.get(ws);
-    if (meta) {
-      if (rooms[meta.orgId]) {
-        rooms[meta.orgId].delete(ws);
-        if (rooms[meta.orgId].size === 0) delete rooms[meta.orgId];
-      }
-      broadcast(meta.orgId, { type: 'user_left', email: meta.email });
-      connections.delete(ws);
-      console.log(`[-] ${meta.email} left`);
-    }
-  });
-});
-
-function broadcast(orgId, message, exclude = null) {
-  const room = rooms[orgId];
-  if (!room) return;
-  const payload = JSON.stringify(message);
-  for (const c of room) {
-    if (c !== exclude && c.readyState === 1) {
-      c.send(payload);
-    }
-  }
-}
-
-// --- Generate self-signed cert for WSS ---
-function ensureCert() {
-  const certDir = path.join(__dirname, 'certs');
-  const keyPath = path.join(certDir, 'key.pem');
-  const certPath = path.join(certDir, 'cert.pem');
-  if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true });
-  if (!fs.existsSync(keyPath)) {
-    console.log('Generating self-signed certificate...');
-    execSync(`openssl req -x509 -newkey rsa:2048 -keyout ${keyPath} -out ${certPath} -days 365 -nodes -subj "/CN=eemployee-chat"`, { stdio: 'ignore' });
-  }
-  return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
-}
-
-// --- HTTPS server for WSS ---
-function handleHttp(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'eemployee-chat', wss: true }));
     return;
   }
-  // Landing page so users can accept the cert
-  res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Certificate accepted!</h2><p>You can close this tab and go back to chat.</p></body></html>');
-}
 
-try {
-  const tlsOpts = ensureCert();
-  const httpsServer = https.createServer(tlsOpts, handleHttp);
-  const wssSecure = new WebSocketServer({ server: httpsServer });
-  wssSecure.on('connection', (ws) => wss.emit('connection', ws));
-  httpsServer.listen(WSS_PORT, '0.0.0.0', () => {
-    console.log(`WSS listening on port ${WSS_PORT}`);
-  });
-} catch (e) {
-  console.log('WSS not available (no openssl?):', e.message);
-}
+  if (req.url === '/join' && req.method === 'POST') {
+    const body = await readBody(req);
+    const { orgId, email, displayName } = body;
+    if (!orgId || !email) {
+      respond(res, 400, { error: 'orgId and email required' });
+      return;
+    }
 
-// Start HTTP server
+    // Remove from any previous room
+    for (const rid of Object.keys(rooms)) {
+      rooms[rid].delete(email);
+      if (rooms[rid].size === 0) delete rooms[rid];
+    }
+
+    if (!rooms[orgId]) rooms[orgId] = new Set();
+    rooms[orgId].add(email);
+    userMeta[email] = { email, displayName, orgId };
+
+    const userList = [];
+    for (const e of rooms[orgId]) {
+      if (userMeta[e]) userList.push({ email: e, displayName: userMeta[e].displayName });
+    }
+
+    console.log(`[+] ${email} joined org ${orgId}`);
+    respond(res, 200, { userList });
+    return;
+  }
+
+  if (req.url === '/leave' && req.method === 'POST') {
+    const body = await readBody(req);
+    const { orgId, email } = body;
+    if (!orgId || !email) {
+      respond(res, 400, { error: 'orgId and email required' });
+      return;
+    }
+
+    if (rooms[orgId]) {
+      rooms[orgId].delete(email);
+      if (rooms[orgId].size === 0) delete rooms[orgId];
+    }
+    delete userMeta[email];
+
+    console.log(`[-] ${email} left org ${orgId}`);
+    respond(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.url === '/message' && req.method === 'POST') {
+    const body = await readBody(req);
+    const { orgId, from, payload, iv } = body;
+    if (!orgId || !from) {
+      respond(res, 400, { error: 'orgId and from required' });
+      return;
+    }
+
+    respond(res, 200, {
+      broadcast: {
+        type: 'message',
+        from,
+        payload,
+        iv,
+        timestamp: new Date().toISOString()
+      }
+    });
+    return;
+  }
+
+  respond(res, 404, { error: 'Not found' });
+});
+
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`E-Employee Chat Server v2.0`);
-  console.log(`WS on port ${PORT} | WSS on port ${WSS_PORT}`);
+  console.log(`E-Employee Chat Server v3.0 (HTTP API)`);
+  console.log(`Listening on port ${PORT}`);
+  console.log(`Health: http://0.0.0.0:${PORT}/health`);
 });
