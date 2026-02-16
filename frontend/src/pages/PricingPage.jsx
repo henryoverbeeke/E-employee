@@ -1,34 +1,16 @@
-import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
-export default function PricingPage() {
-  const { profile, apiCall } = useAuth();
-  const currentTier = profile?.tier || 'none';
-  const [stripeConfig, setStripeConfig] = useState(null);
-  const [loading, setLoading] = useState(true);
+const TIER1_URL = 'https://buy.stripe.com/test_dRm6oJdmO4My3ZD3u34c802';
+const TIER2_URL = 'https://buy.stripe.com/test_bJeeVf0A2a6SdAde8H4c803';
 
-  useEffect(() => {
-    async function loadConfig() {
-      try {
-        const config = await apiCall('/stripe/config');
-        setStripeConfig(config);
-      } catch (e) {
-        console.error('Failed to load Stripe config:', e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadConfig();
-  }, []);
+export default function PricingPage() {
+  const { profile } = useAuth();
+  const currentTier = profile?.tier || 'none';
 
   function buildStripeUrl(baseUrl) {
-    if (!baseUrl || !profile?.orgId) return '#';
+    if (!profile?.orgId) return baseUrl;
     const sep = baseUrl.includes('?') ? '&' : '?';
     return `${baseUrl}${sep}client_reference_id=${profile.orgId}`;
-  }
-
-  if (loading) {
-    return <div className="page"><div className="spinner" /></div>;
   }
 
   return (
@@ -67,7 +49,7 @@ export default function PricingPage() {
             </ul>
           </div>
           {currentTier === 'none' ? (
-            <a href={buildStripeUrl(stripeConfig?.tier1CheckoutUrl)} className="btn btn-primary btn-full">
+            <a href={buildStripeUrl(TIER1_URL)} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-full">
               Subscribe to Tier 1
             </a>
           ) : (
@@ -108,7 +90,7 @@ export default function PricingPage() {
               Current Plan
             </span>
           ) : (
-            <a href={buildStripeUrl(stripeConfig?.tier2CheckoutUrl)} className="btn btn-primary btn-full">
+            <a href={buildStripeUrl(TIER2_URL)} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-full">
               {currentTier === 'tier1' ? 'Upgrade to Tier 2' : 'Subscribe to Tier 2'}
             </a>
           )}
