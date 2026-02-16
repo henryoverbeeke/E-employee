@@ -18,7 +18,6 @@ export default function ManageEmployeesPage() {
   const [subInfo, setSubInfo] = useState(null);
   const [subLoading, setSubLoading] = useState(true);
   const [subAction, setSubAction] = useState('');
-  const [stripeEmail, setStripeEmail] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
 
   // Chat server state
@@ -216,24 +215,21 @@ export default function ManageEmployeesPage() {
     }
   }
 
-  async function handleStripeLookup(e) {
-    e.preventDefault();
-    if (!stripeEmail.trim()) return;
+  async function handleStripeLookup() {
     setLookupLoading(true);
     setError('');
     setSuccess('');
     try {
       const result = await apiCall('/stripe/lookup', {
         method: 'POST',
-        body: JSON.stringify({ email: stripeEmail.trim() })
+        body: JSON.stringify({})
       });
       setSuccess('Stripe subscription linked successfully!');
       setSubInfo(result);
-      setStripeEmail('');
       const token = await getToken();
       await fetchProfile(token);
     } catch (e) {
-      setError(e.message || 'No subscription found for that email');
+      setError(e.message || 'No subscription found for your email');
     } finally {
       setLookupLoading(false);
     }
@@ -321,27 +317,21 @@ export default function ManageEmployeesPage() {
                 ? 'No active subscription. Subscribe to unlock features.'
                 : 'No Stripe subscription linked.'}
             </p>
-            <Link to="/pricing" className="btn btn-primary btn-small" style={{ marginBottom: '1rem' }}>
-              View Plans
-            </Link>
-            <div style={{ borderTop: '1px solid var(--gray-100)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-              <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
-                Already paid? Enter your Stripe email to link your subscription:
-              </p>
-              <form onSubmit={handleStripeLookup} className="inline-form">
-                <input
-                  type="email"
-                  value={stripeEmail}
-                  onChange={e => setStripeEmail(e.target.value)}
-                  placeholder="stripe-account@email.com"
-                  required
-                  style={{ flex: 1 }}
-                />
-                <button type="submit" className="btn btn-small" disabled={lookupLoading}>
-                  {lookupLoading ? 'Looking up...' : 'Link Account'}
-                </button>
-              </form>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <Link to="/pricing" className="btn btn-primary btn-small">
+                View Plans
+              </Link>
+              <button
+                className="btn btn-small"
+                onClick={handleStripeLookup}
+                disabled={lookupLoading}
+              >
+                {lookupLoading ? 'Looking up...' : 'Already Paid? Link My Account'}
+              </button>
             </div>
+            <p className="form-hint" style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
+              "Link My Account" checks Stripe for a subscription under your login email ({profile?.email}).
+            </p>
           </>
         )}
       </div>

@@ -164,13 +164,20 @@ def handle_cancel(event):
     if not sub_id:
         return respond(400, {'error': 'No active subscription'})
 
-    # Cancel at end of billing period
+    # Cancel at end of billing period on Stripe
     result = stripe_request('POST', f'/subscriptions/{sub_id}', {
         'cancel_at_period_end': 'true'
     })
 
     if 'error' in result:
         return respond(400, {'error': result['error'].get('message', 'Cancel failed')})
+
+    # Mark cancellation pending in DynamoDB
+    orgs_table.update_item(
+        Key={'orgId': user['orgId']},
+        UpdateExpression='SET stripeCancelPending = :cp',
+        ExpressionAttributeValues={':cp': True}
+    )
 
     return respond(200, {
         'message': 'Subscription will cancel at end of billing period',
@@ -202,11 +209,17 @@ def handle_reactivate(event):
     if 'error' in result:
         return respond(400, {'error': result['error'].get('message', 'Reactivate failed')})
 
+    # Clear cancellation pending flag in DynamoDB
+    orgs_table.update_item(
+        Key={'orgId': user['orgId']},
+        UpdateExpression='REMOVE stripeCancelPending'
+    )
+
     return respond(200, {'message': 'Subscription reactivated', 'cancelAtPeriodEnd': False})
 
 
 def handle_lookup(event):
-    """Look up a Stripe customer by email and link their subscription to the org."""
+    """Look up a Stripe customer by the admin's own email and link their subscription to the org."""
     email = get_user_email(event)
     if not email:
         return respond(401, {'error': 'Unauthorized'})
@@ -215,11 +228,8 @@ def handle_lookup(event):
     if not user or user.get('role') != 'admin':
         return respond(403, {'error': 'Admin access required'})
 
-    body = json.loads(event.get('body', '{}'))
-    stripe_email = body.get('email', '').strip()
-
-    if not stripe_email:
-        return respond(400, {'error': 'Email is required'})
+    # Only allow looking up the admin's own email -- no spoofing
+    stripe_email = email
 
     # Search Stripe for customers with this email
     encoded_email = urllib.parse.quote(stripe_email)
