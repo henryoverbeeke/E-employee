@@ -205,6 +205,87 @@ def handle_reactivate(event):
     return respond(200, {'message': 'Subscription reactivated', 'cancelAtPeriodEnd': False})
 
 
+def handle_lookup(event):
+    """Look up a Stripe customer by email and link their subscription to the org."""
+    email = get_user_email(event)
+    if not email:
+        return respond(401, {'error': 'Unauthorized'})
+
+    user = get_user_org(email)
+    if not user or user.get('role') != 'admin':
+        return respond(403, {'error': 'Admin access required'})
+
+    body = json.loads(event.get('body', '{}'))
+    stripe_email = body.get('email', '').strip()
+
+    if not stripe_email:
+        return respond(400, {'error': 'Email is required'})
+
+    # Search Stripe for customers with this email
+    encoded_email = urllib.parse.quote(stripe_email)
+    customers = stripe_request('GET', f'/customers?email={encoded_email}&limit=1')
+
+    if 'error' in customers:
+        return respond(400, {'error': customers['error'].get('message', 'Stripe lookup failed')})
+
+    data = customers.get('data', [])
+    if not data:
+        return respond(404, {'error': 'No Stripe customer found with that email'})
+
+    customer = data[0]
+    customer_id = customer['id']
+
+    # Find active subscriptions for this customer
+    subs = stripe_request('GET', f'/subscriptions?customer={customer_id}&limit=5')
+
+    if 'error' in subs:
+        return respond(400, {'error': subs['error'].get('message', 'Failed to fetch subscriptions')})
+
+    sub_list = subs.get('data', [])
+    if not sub_list:
+        return respond(404, {'error': 'No subscriptions found for that customer'})
+
+    # Pick the first active/trialing/past_due subscription
+    active_sub = None
+    for s in sub_list:
+        if s.get('status') in ('active', 'trialing', 'past_due'):
+            active_sub = s
+            break
+
+    if not active_sub:
+        active_sub = sub_list[0]
+
+    sub_id = active_sub['id']
+
+    # Determine tier from the subscription (check product metadata or price)
+    # For now, keep the org's current tier or default to tier1
+    org_resp = orgs_table.get_item(Key={'orgId': user['orgId']})
+    org = org_resp.get('Item', {})
+    current_tier = org.get('tier', 'none')
+    if current_tier == 'none':
+        current_tier = 'tier1'
+
+    # Link the subscription to the org
+    orgs_table.update_item(
+        Key={'orgId': user['orgId']},
+        UpdateExpression='SET stripeCustomerId = :c, stripeSubscriptionId = :s, tier = :t',
+        ExpressionAttributeValues={
+            ':c': customer_id,
+            ':s': sub_id,
+            ':t': current_tier
+        }
+    )
+
+    return respond(200, {
+        'customerId': customer_id,
+        'subscriptionId': sub_id,
+        'status': active_sub.get('status', 'unknown'),
+        'tier': current_tier,
+        'cancelAtPeriodEnd': active_sub.get('cancel_at_period_end', False),
+        'currentPeriodEnd': active_sub.get('current_period_end')
+    })
+
+
 def handle_cancel_immediately(event):
     """Cancel immediately and remove tier."""
     email = get_user_email(event)
@@ -263,5 +344,9 @@ def lambda_handler(event, context):
     # POST /stripe/cancel-now
     if method == 'POST' and path.endswith('/stripe/cancel-now'):
         return handle_cancel_immediately(event)
+
+    # POST /stripe/lookup
+    if method == 'POST' and path.endswith('/stripe/lookup'):
+        return handle_lookup(event)
 
     return respond(404, {'error': 'Not found'})
