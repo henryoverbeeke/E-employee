@@ -91,23 +91,44 @@ def handle_activate(event):
     if tier not in ('tier1', 'tier2', 'infrastructure'):
         return respond(400, {'error': 'Invalid tier'})
 
-    # Retrieve the checkout session from Stripe
+    # Retrieve the checkout session from Stripe (expand line_items for product info)
     session = stripe_request('GET', f'/checkout/sessions/{session_id}')
     if 'error' in session:
         return respond(400, {'error': session['error'].get('message', 'Failed to retrieve session')})
 
-    customer_id = session.get('customer', '')
-    subscription_id = session.get('subscription', '')
+    print(f"Stripe session response: mode={session.get('mode')}, "
+          f"customer={session.get('customer')}, subscription={session.get('subscription')}, "
+          f"payment_status={session.get('payment_status')}")
 
-    # Update org with Stripe info and tier
+    customer_id = session.get('customer') or ''
+    subscription_id = session.get('subscription') or ''
+
+    # If session didn't include a subscription, try to find one from the customer
+    if customer_id and not subscription_id:
+        print(f"No subscription in session, looking up subscriptions for customer {customer_id}")
+        subs = stripe_request('GET', f'/subscriptions?customer={customer_id}&limit=5')
+        if 'error' not in subs:
+            for s in subs.get('data', []):
+                if s.get('status') in ('active', 'trialing', 'past_due'):
+                    subscription_id = s['id']
+                    print(f"Found active subscription: {subscription_id}")
+                    break
+
+    # Build the DynamoDB update
+    update_expr = 'SET tier = :t'
+    expr_values = {':t': tier}
+
+    if customer_id:
+        update_expr += ', stripeCustomerId = :c'
+        expr_values[':c'] = customer_id
+    if subscription_id:
+        update_expr += ', stripeSubscriptionId = :s'
+        expr_values[':s'] = subscription_id
+
     orgs_table.update_item(
         Key={'orgId': user['orgId']},
-        UpdateExpression='SET tier = :t, stripeCustomerId = :c, stripeSubscriptionId = :s',
-        ExpressionAttributeValues={
-            ':t': tier,
-            ':c': customer_id,
-            ':s': subscription_id
-        }
+        UpdateExpression=update_expr,
+        ExpressionAttributeValues=expr_values
     )
 
     return respond(200, {

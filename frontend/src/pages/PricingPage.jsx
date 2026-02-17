@@ -2,7 +2,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const TIER1_URL = 'https://buy.stripe.com/test_dRm6oJdmO4My3ZD3u34c802';
 const TIER2_URL = 'https://buy.stripe.com/test_bJeeVf0A2a6SdAde8H4c803';
-const INFRA_URL = 'https://buy.stripe.com/test_14A8wRaaCen8ao11lV4c804';
+const INFRA_URL = 'https://buy.stripe.com/test_14AbJ33Me6UGeEh2pZ4c806';
 
 export default function PricingPage() {
   const { profile } = useAuth();
