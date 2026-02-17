@@ -241,7 +241,7 @@ export default function ManageEmployeesPage() {
 
   function renderPlanCard() {
     const tier = profile?.tier || 'none';
-    const tierLabel = tier === 'tier2' ? 'Tier 2' : tier === 'tier1' ? 'Tier 1' : 'No Plan';
+    const tierLabel = tier === 'infrastructure' ? 'Infrastructure' : tier === 'tier2' ? 'Tier 2' : tier === 'tier1' ? 'Tier 1' : 'No Plan';
 
     return (
       <div className="card">
@@ -495,7 +495,7 @@ export default function ManageEmployeesPage() {
 
       {renderPlanCard()}
 
-      {(profile?.tier === 'tier2') && renderChatServerCard()}
+      {(profile?.tier === 'tier2' || profile?.tier === 'infrastructure') && renderChatServerCard()}
 
       <div className="card">
         <h3>Add Employee</h3>
