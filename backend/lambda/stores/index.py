@@ -123,7 +123,6 @@ def create_store(event):
         'orgId': org_id,
         'storeId': store_id,
         'storeName': store_name,
-        'managerEmail': '',
         'createdAt': now
     }
 
@@ -247,11 +246,18 @@ def assign_manager(event):
             ExpressionAttributeValues={':r': 'manager', ':s': store_id}
         )
 
-    stores_table.update_item(
-        Key={'orgId': org_id, 'storeId': store_id},
-        UpdateExpression='SET managerEmail = :m',
-        ExpressionAttributeValues={':m': manager_email}
-    )
+    if manager_email:
+        stores_table.update_item(
+            Key={'orgId': org_id, 'storeId': store_id},
+            UpdateExpression='SET managerEmail = :m',
+            ExpressionAttributeValues={':m': manager_email}
+        )
+    else:
+        # Remove the attribute so the GSI doesn't get an empty string
+        stores_table.update_item(
+            Key={'orgId': org_id, 'storeId': store_id},
+            UpdateExpression='REMOVE managerEmail'
+        )
 
     return respond(200, {
         'message': f'Manager {"assigned" if manager_email else "removed"} for store',
