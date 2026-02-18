@@ -16,6 +16,10 @@ export function useChat() {
   const wsRef = useRef(null);
   const encKeyRef = useRef(null);
   const connectingRef = useRef(false);
+  const storeIdRef = useRef(storeId);
+  const isInfraRef = useRef(isInfrastructure);
+  storeIdRef.current = storeId;
+  isInfraRef.current = isInfrastructure;
 
   async function deriveKey(orgId, salt) {
     if (!hasSubtleCrypto) {
@@ -128,8 +132,8 @@ export function useChat() {
 
       // Connect to API Gateway WebSocket with token in query string
       let wsUrl = `${config.chatWsUrl}?token=${encodeURIComponent(token)}`;
-      if (isInfrastructure && storeId) {
-        wsUrl += `&storeId=${encodeURIComponent(storeId)}`;
+      if (isInfraRef.current && storeIdRef.current) {
+        wsUrl += `&storeId=${encodeURIComponent(storeIdRef.current)}`;
       }
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;

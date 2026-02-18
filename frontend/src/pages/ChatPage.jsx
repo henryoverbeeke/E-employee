@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useStore } from '../contexts/StoreContext';
 import { useChat } from '../hooks/useLocalChat';
 
 export default function ChatPage() {
   const { profile } = useAuth();
+  const { storeId, currentStore, isInfrastructure } = useStore();
   const [messageText, setMessageText] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef(null);
+  const prevStoreRef = useRef(storeId);
 
   const {
     messages, users, isConnected, connectionError,
@@ -19,6 +22,15 @@ export default function ChatPage() {
     }
     return () => disconnect();
   }, [profile]);
+
+  // Reconnect when store changes
+  useEffect(() => {
+    if (prevStoreRef.current !== storeId && storeId) {
+      prevStoreRef.current = storeId;
+      disconnect();
+      setTimeout(() => connect(), 300);
+    }
+  }, [storeId]);
 
   // Auto-retry every 20s while booting
   useEffect(() => {
@@ -107,7 +119,7 @@ export default function ChatPage() {
     <div className="page chat-page">
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <h1><span style={{ color: 'var(--blue-500)' }}>Chat</span></h1>
+          <h1><span style={{ color: 'var(--blue-500)' }}>Chat</span>{isInfrastructure && currentStore && <span style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--gray-500)', marginLeft: '0.75rem' }}>{currentStore.storeName}</span>}</h1>
           {isConnected && (
             <span className="wifi-badge">
               <span className="status-dot connected" /> Connected
