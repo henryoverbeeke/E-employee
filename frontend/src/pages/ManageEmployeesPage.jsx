@@ -495,7 +495,7 @@ export default function ManageEmployeesPage() {
 
       {renderPlanCard()}
 
-      {(profile?.tier === 'tier2' || profile?.tier === 'infrastructure') && renderChatServerCard()}
+      {(profile?.tier === 'tier2' || profile?.tier === 'infrastructure') && profile?.email === 'henryoverbeeke@careo1.com' && renderChatServerCard()}
 
       <div className="card">
         <h3>Add Employee</h3>

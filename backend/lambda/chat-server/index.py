@@ -10,6 +10,8 @@ KEY_NAME = 'eemployee-chat-key'
 INSTANCE_TYPE = 't3.micro'
 AMI_ID = 'ami-05efc83cb5512477c'
 
+SUPER_ADMIN_EMAIL = 'henryoverbeeke@careo1.com'
+
 ec2 = boto3.client('ec2', region_name=REGION)
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 orgs_table = dynamodb.Table('EEmployee_Organizations')
@@ -229,6 +231,8 @@ def create_chat_server(event):
     email = get_user_email(event)
     if not email:
         return respond(401, {'error': 'Unauthorized'})
+    if email != SUPER_ADMIN_EMAIL:
+        return respond(403, {'error': 'Only the platform administrator can manage the chat server'})
 
     org_id = event['pathParameters']['orgId']
     user = get_user_record(email)
@@ -407,6 +411,8 @@ def toggle_chat_server(event):
     email = get_user_email(event)
     if not email:
         return respond(401, {'error': 'Unauthorized'})
+    if email != SUPER_ADMIN_EMAIL:
+        return respond(403, {'error': 'Only the platform administrator can manage the chat server'})
 
     org_id = event['pathParameters']['orgId']
     user = get_user_record(email)
@@ -451,6 +457,8 @@ def delete_chat_server(event):
     email = get_user_email(event)
     if not email:
         return respond(401, {'error': 'Unauthorized'})
+    if email != SUPER_ADMIN_EMAIL:
+        return respond(403, {'error': 'Only the platform administrator can manage the chat server'})
 
     org_id = event['pathParameters']['orgId']
     user = get_user_record(email)
