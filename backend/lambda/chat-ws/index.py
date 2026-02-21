@@ -8,23 +8,18 @@ from boto3.dynamodb.conditions import Key
 REGION = 'us-east-2'
 dynamodb = boto3.resource('dynamodb', region_name=REGION)
 connections_table = dynamodb.Table('EEmployee_ChatConnections')
-orgs_table = dynamodb.Table('EEmployee_Organizations')
 users_table = dynamodb.Table('EEmployee_Users')
 
+# Single shared EC2 chat server URL
+CHAT_EC2_URL = os.environ.get('CHAT_EC2_URL', '')
 
-def get_ec2_url(org_id):
-    """Get the EC2 chat server URL from the org record."""
-    resp = orgs_table.get_item(Key={'orgId': org_id})
-    org = resp.get('Item', {})
-    host = org.get('chatServerHost', '')
-    port = int(org.get('chatServerPort', 8765))
-    if not host:
+
+def ec2_request(path, data):
+    """Make an HTTP POST to the shared EC2 chat server."""
+    if not CHAT_EC2_URL:
+        print('CHAT_EC2_URL not configured')
         return None
-    return f'http://{host}:{port}'
-
-
-def ec2_request(url, data):
-    """Make an HTTP POST to the EC2 chat server."""
+    url = f'{CHAT_EC2_URL}{path}'
     body = json.dumps(data).encode()
     req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'}, method='POST')
     try:
@@ -36,7 +31,6 @@ def ec2_request(url, data):
 
 
 def get_apigw_client(event):
-    """Build the API Gateway Management API client from the event context."""
     domain = event['requestContext']['domainName']
     stage = event['requestContext']['stage']
     endpoint = f'https://{domain}/{stage}'
@@ -44,7 +38,6 @@ def get_apigw_client(event):
 
 
 def send_to_connection(apigw, connection_id, data):
-    """Send data to a specific WebSocket connection."""
     try:
         apigw.post_to_connection(ConnectionId=connection_id, Data=json.dumps(data).encode())
     except apigw.exceptions.GoneException:
@@ -53,8 +46,8 @@ def send_to_connection(apigw, connection_id, data):
         print(f'Failed to send to {connection_id}: {e}')
 
 
-def broadcast_to_org(apigw, org_id, data, exclude_connection=None, store_id=None):
-    """Send data to all connections in an org (or store if specified)."""
+def broadcast(apigw, org_id, data, exclude_connection=None, store_id=None):
+    """Send data to all connections in an org, filtered by store if specified."""
     resp = connections_table.query(
         IndexName='orgId-index',
         KeyConditionExpression=Key('orgId').eq(org_id)
@@ -63,14 +56,17 @@ def broadcast_to_org(apigw, org_id, data, exclude_connection=None, store_id=None
         cid = item['connectionId']
         if cid == exclude_connection:
             continue
-        # If store_id filtering is active, only send to same store
         if store_id and item.get('storeId', '') != store_id:
             continue
         send_to_connection(apigw, cid, data)
 
 
+def get_room_id(org_id, store_id):
+    """Build a unique room key: storeId for infrastructure, orgId otherwise."""
+    return store_id if store_id else org_id
+
+
 def handle_connect(event):
-    """Handle $connect - authenticate and join."""
     connection_id = event['requestContext']['connectionId']
     qs = event.get('queryStringParameters') or {}
     token = qs.get('token', '')
@@ -78,43 +74,21 @@ def handle_connect(event):
     if not token:
         return {'statusCode': 401}
 
-    # Find the org for this user by calling EC2 /auth
-    # First we need to find which org's EC2 to call. We'll check all orgs.
-    # For now, scan for orgs with a running chat server.
-    scan = orgs_table.scan(
-        FilterExpression='chatServerStatus = :s',
-        ExpressionAttributeValues={':s': 'running'}
-    )
-    orgs = scan.get('Items', [])
-
-    user_info = None
-    ec2_url = None
-    for org in orgs:
-        host = org.get('chatServerHost', '')
-        port = int(org.get('chatServerPort', 8765))
-        if not host:
-            continue
-        url = f'http://{host}:{port}'
-        result = ec2_request(f'{url}/auth', {'token': token})
-        if result and result.get('orgId') and result['orgId'] == org['orgId']:
-            user_info = result
-            ec2_url = url
-            break
-
-    if not user_info:
+    # Authenticate against the shared EC2 instance
+    user_info = ec2_request('/auth', {'token': token})
+    if not user_info or not user_info.get('orgId'):
         return {'statusCode': 401}
 
-    # Look up storeId from query params or user record
+    # Resolve storeId from query params or user record
     store_id = qs.get('storeId', '')
     if not store_id:
         user_rec = users_table.get_item(Key={'email': user_info['email']}).get('Item', {})
         store_id = user_rec.get('storeId', '')
 
-    # For infrastructure tier, use storeId as the room key
-    room_id = store_id if store_id else user_info['orgId']
+    room_id = get_room_id(user_info['orgId'], store_id)
 
     # Join the room on EC2
-    join_result = ec2_request(f'{ec2_url}/join', {
+    ec2_request('/join', {
         'orgId': room_id,
         'email': user_info['email'],
         'displayName': user_info['displayName']
@@ -135,7 +109,6 @@ def handle_connect(event):
 
 
 def handle_default(event):
-    """Handle $default - relay messages."""
     connection_id = event['requestContext']['connectionId']
     body = event.get('body', '{}')
 
@@ -144,7 +117,6 @@ def handle_default(event):
     except Exception:
         return {'statusCode': 400}
 
-    # Look up connection info
     conn_resp = connections_table.get_item(Key={'connectionId': connection_id})
     conn = conn_resp.get('Item')
     if not conn:
@@ -153,27 +125,25 @@ def handle_default(event):
     org_id = conn['orgId']
     email = conn['email']
     store_id = conn.get('storeId', '')
-    room_id = store_id if store_id else org_id
+    room_id = get_room_id(org_id, store_id)
     apigw = get_apigw_client(event)
 
     msg_type = data.get('type', '')
 
     if msg_type == 'auth':
-        ec2_url = get_ec2_url(org_id)
         user_list = []
-        if ec2_url:
-            join_result = ec2_request(f'{ec2_url}/join', {
-                'orgId': room_id,
-                'email': email,
-                'displayName': conn.get('displayName', email)
-            })
-            if join_result:
-                user_list = join_result.get('userList', [])
+        join_result = ec2_request('/join', {
+            'orgId': room_id,
+            'email': email,
+            'displayName': conn.get('displayName', email)
+        })
+        if join_result:
+            user_list = join_result.get('userList', [])
 
         send_to_connection(apigw, connection_id, {'type': 'auth_success'})
         send_to_connection(apigw, connection_id, {'type': 'user_list', 'users': user_list})
 
-        broadcast_to_org(apigw, org_id, {
+        broadcast(apigw, org_id, {
             'type': 'user_joined',
             'email': email,
             'displayName': conn.get('displayName', email)
@@ -182,16 +152,14 @@ def handle_default(event):
         return {'statusCode': 200}
 
     if msg_type == 'message':
-        ec2_url = get_ec2_url(org_id)
-        if ec2_url:
-            result = ec2_request(f'{ec2_url}/message', {
-                'orgId': room_id,
-                'from': email,
-                'payload': data.get('payload', ''),
-                'iv': data.get('iv', '')
-            })
-            if result and result.get('broadcast'):
-                broadcast_to_org(apigw, org_id, result['broadcast'], store_id=store_id or None)
+        result = ec2_request('/message', {
+            'orgId': room_id,
+            'from': email,
+            'payload': data.get('payload', ''),
+            'iv': data.get('iv', '')
+        })
+        if result and result.get('broadcast'):
+            broadcast(apigw, org_id, result['broadcast'], store_id=store_id or None)
 
         return {'statusCode': 200}
 
@@ -199,10 +167,8 @@ def handle_default(event):
 
 
 def handle_disconnect(event):
-    """Handle $disconnect - clean up."""
     connection_id = event['requestContext']['connectionId']
 
-    # Look up connection
     conn_resp = connections_table.get_item(Key={'connectionId': connection_id})
     conn = conn_resp.get('Item')
 
@@ -210,24 +176,19 @@ def handle_disconnect(event):
         org_id = conn['orgId']
         email = conn['email']
         store_id = conn.get('storeId', '')
-        room_id = store_id if store_id else org_id
+        room_id = get_room_id(org_id, store_id)
 
-        # Tell EC2 to remove from room
-        ec2_url = get_ec2_url(org_id)
-        if ec2_url:
-            ec2_request(f'{ec2_url}/leave', {'orgId': room_id, 'email': email})
+        ec2_request('/leave', {'orgId': room_id, 'email': email})
 
-        # Notify others
         try:
             apigw = get_apigw_client(event)
-            broadcast_to_org(apigw, org_id, {
+            broadcast(apigw, org_id, {
                 'type': 'user_left',
                 'email': email
             }, exclude_connection=connection_id, store_id=store_id or None)
         except Exception:
             pass
 
-        # Delete from DynamoDB
         connections_table.delete_item(Key={'connectionId': connection_id})
 
     return {'statusCode': 200}
