@@ -132,7 +132,7 @@ export default function PricingPage() {
                 <span style={{ color: 'var(--green-500)', fontWeight: 700 }}>+</span> Store managers
               </li>
               <li style={{ padding: '0.5rem 0', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: 'var(--green-500)', fontWeight: 700 }}>+</span> Extra stores at $8/mo each
+                <span style={{ color: 'var(--green-500)', fontWeight: 700 }}>+</span> Extra stores at $1.99/mo each
               </li>
             </ul>
           </div>

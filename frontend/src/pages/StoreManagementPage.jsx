@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStore } from '../contexts/StoreContext';
 
-const EXTRA_STORE_URL = 'https://buy.stripe.com/test_00w9AVdmO6UGcw91lV4c805';
+const EXTRA_STORE_URL = 'https://buy.stripe.com/test_cNi6oJ96yfrc67L2pZ4c807';
 const FREE_LIMIT = 3;
 
 export default function StoreManagementPage() {
@@ -61,7 +61,7 @@ export default function StoreManagementPage() {
       await fetchProfile(token);
     } catch (e) {
       if (e.message?.includes('needsExtraStore') || e.message?.includes('Purchase another')) {
-        setError(`You've reached the limit. Purchase an extra store add-on ($8/mo) to add more.`);
+        setError(`You've reached the limit. Purchase an extra store add-on ($1.99/mo) to add more.`);
       } else {
         setError(e.message);
       }
@@ -143,7 +143,7 @@ export default function StoreManagementPage() {
         {storeList.length >= FREE_LIMIT && (
           <div style={{ marginTop: '0.75rem' }}>
             <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
-              You've used all {FREE_LIMIT} free stores. Extra stores cost $8/month each.
+              You've used all {FREE_LIMIT} free stores. Extra stores cost $1.99/month each.
             </p>
             <a
               href={buildExtraStoreUrl()}
@@ -152,7 +152,7 @@ export default function StoreManagementPage() {
               className="btn btn-small"
               style={{ background: 'var(--purple-500)', color: '#fff', border: 'none' }}
             >
-              Purchase Extra Store ($8/mo)
+              Purchase Extra Store ($1.99/mo)
             </a>
           </div>
         )}
